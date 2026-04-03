@@ -143,11 +143,164 @@ public class HistoricalPostcodeDictionary {
         return periods;
     }
 
+    /**
+     * 郵便番号 → 住所の変遷を「変化点」だけ抽出 (period:address マップ)。
+     * 同一郵便番号でも住所名が変わった場合（市町村合併等）を追跡できる。
+     * @return 住所が変わった時点のリスト [{from, to, address}]
+     */
+    public List<AddressPeriod> postcodeAddressPeriods(String postcode) {
+        var history = postcodeHistory(postcode);
+        if (history.isEmpty()) return List.of();
+
+        List<AddressPeriod> periods = new ArrayList<>();
+        String prevKey = null;
+        List<PostcodeEntry> prevEntries = null;
+        YearMonth periodStart = null;
+
+        for (var entry : history.entrySet()) {
+            // 住所リストをキー文字列化して比較
+            String key = entry.getValue().stream()
+                    .map(PostcodeEntry::addressKey)
+                    .sorted()
+                    .collect(java.util.stream.Collectors.joining(";"));
+            if (!key.equals(prevKey)) {
+                if (prevKey != null) {
+                    periods.add(new AddressPeriod(periodStart, entry.getKey(), prevEntries));
+                }
+                prevKey = key;
+                prevEntries = entry.getValue();
+                periodStart = entry.getKey();
+            }
+        }
+        if (prevKey != null) {
+            periods.add(new AddressPeriod(periodStart, null, prevEntries));
+        }
+        return periods;
+    }
+
+    public record AddressPeriod(YearMonth from, YearMonth to, List<PostcodeEntry> entries) {
+        @Override
+        public String toString() {
+            String toStr = to == null ? "present" : to.toString();
+            String addr = entries.stream()
+                    .map(e -> e.prefecture() + e.municipality() + e.town())
+                    .collect(java.util.stream.Collectors.joining(", "));
+            return addr + " (" + from + " ~ " + toStr + ")";
+        }
+    }
+
     public record PostcodePeriod(YearMonth from, YearMonth to, String postcode) {
         @Override
         public String toString() {
             String toStr = to == null ? "present" : to.toString();
             return postcode + " (" + from + " ~ " + toStr + ")";
+        }
+    }
+
+    // ======== スナップショット・差分API ========
+
+    /**
+     * 指定時点の全郵便番号辞書を取得。
+     * @return postcode → entries (その時点の全エントリ)
+     */
+    public Map<String, List<PostcodeEntry>> snapshotAt(YearMonth at) {
+        var floor = snapshots.floorEntry(at);
+        return floor != null ? Collections.unmodifiableMap(floor.getValue()) : Map.of();
+    }
+
+    /**
+     * 2時点間の差分を取得。
+     * @return added: fromにはなくtoにある, removed: fromにはあるがtoにはない
+     */
+    public Diff diff(YearMonth from, YearMonth to) {
+        var fromSnapshot = snapshotAt(from);
+        var toSnapshot = snapshotAt(to);
+
+        Map<String, List<PostcodeEntry>> added = new HashMap<>();
+        Map<String, List<PostcodeEntry>> removed = new HashMap<>();
+
+        // toにあってfromにないもの = added
+        Set<String> allPostcodes = new HashSet<>(fromSnapshot.keySet());
+        allPostcodes.addAll(toSnapshot.keySet());
+        for (String pc : allPostcodes) {
+            var fromEntries = fromSnapshot.getOrDefault(pc, List.of());
+            var toEntries = toSnapshot.getOrDefault(pc, List.of());
+            var fromKeys = fromEntries.stream().map(PostcodeEntry::addressKey).collect(Collectors.toSet());
+            var toKeys = toEntries.stream().map(PostcodeEntry::addressKey).collect(Collectors.toSet());
+            if (!fromKeys.equals(toKeys)) {
+                var addedEntries = toEntries.stream().filter(e -> !fromKeys.contains(e.addressKey())).toList();
+                var removedEntries = fromEntries.stream().filter(e -> !toKeys.contains(e.addressKey())).toList();
+                if (!addedEntries.isEmpty()) added.put(pc, addedEntries);
+                if (!removedEntries.isEmpty()) removed.put(pc, removedEntries);
+            }
+        }
+        return new Diff(from, to, added, removed);
+    }
+
+    public record Diff(
+            YearMonth from, YearMonth to,
+            Map<String, List<PostcodeEntry>> added,
+            Map<String, List<PostcodeEntry>> removed
+    ) {
+        public int addedCount() { return added.values().stream().mapToInt(List::size).sum(); }
+        public int removedCount() { return removed.values().stream().mapToInt(List::size).sum(); }
+    }
+
+    // ======== 変更検出API ========
+
+    /**
+     * 郵便番号が変わった住所の一覧。
+     * (同一住所で期間中に郵便番号が変化したもの)
+     */
+    public List<AddressChange> findChangedAddresses() {
+        List<AddressChange> changes = new ArrayList<>();
+        for (var entry : addressTimeline.entrySet()) {
+            TreeMap<YearMonth, String> timeline = entry.getValue();
+            String prev = null;
+            for (var monthEntry : timeline.entrySet()) {
+                if (prev != null && !prev.equals(monthEntry.getValue())) {
+                    String[] parts = entry.getKey().split("\\|", 3);
+                    changes.add(new AddressChange(
+                            parts.length > 0 ? parts[0] : "",
+                            parts.length > 1 ? parts[1] : "",
+                            parts.length > 2 ? parts[2] : "",
+                            prev, monthEntry.getValue(), monthEntry.getKey()));
+                }
+                prev = monthEntry.getValue();
+            }
+        }
+        return changes;
+    }
+
+    /**
+     * 住所が変わった郵便番号の一覧。
+     * (同一郵便番号で期間中に住所名が変化したもの — 市町村合併等)
+     */
+    public List<PostcodeChange> findChangedPostcodes() {
+        List<PostcodeChange> changes = new ArrayList<>();
+        for (var entry : postcodeTimeline.entrySet()) {
+            var periods = postcodeAddressPeriods(entry.getKey());
+            if (periods.size() > 1) {
+                changes.add(new PostcodeChange(entry.getKey(), periods));
+            }
+        }
+        return changes;
+    }
+
+    public record AddressChange(
+            String prefecture, String municipality, String town,
+            String oldPostcode, String newPostcode, YearMonth changedAt
+    ) {
+        @Override
+        public String toString() {
+            return prefecture + municipality + town + ": " + oldPostcode + " -> " + newPostcode + " (" + changedAt + ")";
+        }
+    }
+
+    public record PostcodeChange(String postcode, List<AddressPeriod> periods) {
+        @Override
+        public String toString() {
+            return postcode + ": " + periods.size() + " periods";
         }
     }
 
@@ -157,6 +310,10 @@ public class HistoricalPostcodeDictionary {
     public YearMonth latestMonth() { return snapshots.isEmpty() ? null : snapshots.lastKey(); }
     /** スナップショット数 */
     public int snapshotCount() { return snapshots.size(); }
+    /** ユニーク郵便番号数（全期間） */
+    public int uniquePostcodeCount() { return postcodeTimeline.size(); }
+    /** ユニーク住所数（全期間） */
+    public int uniqueAddressCount() { return addressTimeline.size(); }
 
     // ======== 構築ロジック ========
 
@@ -251,16 +408,19 @@ public class HistoricalPostcodeDictionary {
     // ======== CSV I/O ========
 
     private static Set<PostcodeEntry> loadCsv(Path path) throws IOException {
-        Set<PostcodeEntry> entries = new LinkedHashSet<>();
+        List<PostcodeEntry> rawEntries = new ArrayList<>();
         try (BufferedReader reader = Files.newBufferedReader(path, MS932)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 PostcodeEntry entry = PostcodeEntry.fromCsvLine(line);
                 if (entry != null && !entry.postcode().isBlank()) {
-                    entries.add(entry);
+                    rawEntries.add(entry);
                 }
             }
         }
+        // 複数行分割（町域名の括弧が閉じるまで続く行）をマージ
+        List<PostcodeEntry> merged = PostcodeEntry.mergeContinuationRows(rawEntries);
+        Set<PostcodeEntry> entries = new LinkedHashSet<>(merged);
         return entries;
     }
 
@@ -349,5 +509,37 @@ public class HistoricalPostcodeDictionary {
                 System.out.printf("    %s\n", p);
             }
         }
+
+        // 郵便番号の住所変遷 (period:address)
+        System.out.println("\n=== Postcode address periods (postcode -> period:address) ===");
+        String[] interestingPostcodes = {"0613601", "0613151"};
+        for (String pc : interestingPostcodes) {
+            var periods = dict.postcodeAddressPeriods(pc);
+            if (periods.isEmpty()) continue;
+            System.out.printf("\n  %s:\n", pc);
+            for (var p : periods) {
+                System.out.printf("    %s\n", p);
+            }
+        }
+
+        // 2時点間の差分
+        System.out.println("\n=== Diff: 2026-03 vs 2026-04 ===");
+        var d = dict.diff(YearMonth.of(2026, 3), YearMonth.of(2026, 4));
+        System.out.printf("  Added: %d entries, Removed: %d entries\n", d.addedCount(), d.removedCount());
+        d.added().entrySet().stream().limit(5).forEach(e ->
+                System.out.printf("  + %s: %s\n", e.getKey(), e.getValue().get(0).prefecture() + e.getValue().get(0).municipality() + e.getValue().get(0).town()));
+        d.removed().entrySet().stream().limit(5).forEach(e ->
+                System.out.printf("  - %s: %s\n", e.getKey(), e.getValue().get(0).prefecture() + e.getValue().get(0).municipality() + e.getValue().get(0).town()));
+
+        // 住所が変わった郵便番号の数
+        System.out.println("\n=== Statistics ===");
+        var changedPostcodes = dict.findChangedPostcodes();
+        var changedAddresses = dict.findChangedAddresses();
+        System.out.printf("  Postcodes with address changes: %,d\n", changedPostcodes.size());
+        System.out.printf("  Addresses with postcode changes: %,d\n", changedAddresses.size());
+        changedPostcodes.stream().limit(5).forEach(c ->
+                System.out.printf("    %s\n", c));
+        changedAddresses.stream().limit(5).forEach(c ->
+                System.out.printf("    %s\n", c));
     }
 }

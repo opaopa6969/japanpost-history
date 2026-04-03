@@ -15,14 +15,14 @@ import java.util.zip.ZipInputStream;
 /**
  * 日本郵便サーバーから KEN_ALL + ADD/DEL 月次更新ファイルをダウンロード。
  *
- * 利用可能な期間: 2008年1月 (add_0801) ～ 現在
+ * 利用可能な期間: 2007年10月 (add_0710) ～ 現在
  */
 public class JapanPostDownloader {
 
     private static final String BASE_URL = "https://www.post.japanpost.jp/zipcode/dl/kogaki/zip/";
 
     public static void downloadAll(Path outputDir) throws Exception {
-        downloadAll(outputDir, YearMonth.of(2008, 1), YearMonth.now());
+        downloadAll(outputDir, YearMonth.of(2007, 10), YearMonth.now());
     }
 
     public static void downloadAll(Path outputDir, YearMonth from, YearMonth to) throws Exception {
