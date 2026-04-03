@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>japanpost-history - 郵便番号タイムマシン</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, 'Hiragino Sans', 'Meiryo', sans-serif; background: #f5f5f5; color: #333; }
+  .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+  h1 { font-size: 1.5em; margin-bottom: 4px; }
+  .subtitle { color: #888; font-size: 0.9em; margin-bottom: 20px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab { padding: 8px 16px; background: #ddd; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 0.95em; }
+  .tab.active { background: #fff; font-weight: bold; }
+  .panel { background: #fff; border-radius: 0 8px 8px 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: none; }
+  .panel.active { display: block; }
+  .form-row { display: flex; gap: 8px; align-items: end; margin-bottom: 12px; flex-wrap: wrap; }
+  label { font-size: 0.85em; color: #666; display: block; margin-bottom: 2px; }
+  input, select { padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
+  input.postcode { width: 120px; font-family: monospace; font-size: 1.1em; }
+  input.date { width: 120px; }
+  input.addr { width: 160px; }
+  button { padding: 8px 20px; background: #2563eb; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 1em; }
+  button:hover { background: #1d4ed8; }
+  .result { margin-top: 16px; }
+  .result-empty { color: #999; font-style: italic; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid #eee; text-align: left; font-size: 0.9em; }
+  th { background: #f8f8f8; font-weight: 600; }
+  .period { display: inline-block; background: #e0f2fe; padding: 2px 8px; border-radius: 3px; margin: 2px; font-size: 0.85em; }
+  .period .pc { font-family: monospace; font-weight: bold; }
+  .change-arrow { color: #ef4444; font-weight: bold; }
+  .badge { display: inline-block; background: #dbeafe; color: #1e40af; padding: 1px 6px; border-radius: 3px; font-size: 0.8em; }
+  .info-bar { background: #fff; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; gap: 20px; font-size: 0.85em; color: #666; }
+  .info-bar strong { color: #333; }
+  .slider-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .slider-row input[type=range] { flex: 1; }
+  .slider-label { font-family: monospace; font-size: 1.1em; min-width: 80px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>japanpost-history</h1>
+  <p class="subtitle">郵便番号タイムマシン &mdash; 任意の時点の郵便番号を検索</p>
+
+  <div class="info-bar" id="info-bar">読み込み中...</div>
+
+  <div class="tabs">
+    <button class="tab active" data-panel="panel-postcode">郵便番号 → 住所</button>
+    <button class="tab" data-panel="panel-address">住所 → 郵便番号</button>
+    <button class="tab" data-panel="panel-diff">差分比較</button>
+  </div>
+
+  <!-- 郵便番号 → 住所 -->
+  <div class="panel active" id="panel-postcode">
+    <div class="form-row">
+      <div><label>郵便番号</label><input class="postcode" id="pc-input" placeholder="0613601" maxlength="7"></div>
+      <button onclick="lookupPostcode()">検索</button>
+    </div>
+    <div class="slider-row">
+      <span>時点:</span>
+      <input type="range" id="pc-slider" min="0" max="100" value="100">
+      <span class="slider-label" id="pc-slider-label">-</span>
+    </div>
+    <div class="result" id="pc-result"></div>
+    <div class="result" id="pc-timeline"></div>
+  </div>
+
+  <!-- 住所 → 郵便番号 -->
+  <div class="panel" id="panel-address">
+    <div class="form-row">
+      <div><label>都道府県</label><input class="addr" id="addr-pref" placeholder="北海道"></div>
+      <div><label>市区町村</label><input class="addr" id="addr-muni" placeholder="石狩市"></div>
+      <div><label>町域</label><input class="addr" id="addr-town" placeholder="厚田区厚田"></div>
+      <button onclick="lookupAddress()">検索</button>
+    </div>
+    <div class="result" id="addr-result"></div>
+  </div>
+
+  <!-- 差分比較 -->
+  <div class="panel" id="panel-diff">
+    <div class="form-row">
+      <div><label>From</label><input class="date" id="diff-from" placeholder="2026-03"></div>
+      <div><label>To</label><input class="date" id="diff-to" placeholder="2026-04"></div>
+      <button onclick="loadDiff()">比較</button>
+    </div>
+    <div class="result" id="diff-result"></div>
+  </div>
+</div>
+
+<script>
+let meta = {};
+let months = [];
+
+async function init() {
+  const res = await fetch('/api/info');
+  meta = await res.json();
+  document.getElementById('info-bar').innerHTML =
+    `<span>期間: <strong>${meta.earliest} ~ ${meta.latest}</strong></span>` +
+    `<span>スナップショット: <strong>${meta.snapshots}</strong></span>` +
+    `<span>郵便番号: <strong>${meta.uniquePostcodes.toLocaleString()}</strong></span>` +
+    `<span>住所: <strong>${meta.uniqueAddresses.toLocaleString()}</strong></span>`;
+
+  // month list for slider
+  const earliest = parseYM(meta.earliest);
+  const latest = parseYM(meta.latest);
+  let cur = earliest;
+  while (cur <= latest) {
+    months.push(formatYM(cur));
+    cur = addMonth(cur);
+  }
+  const slider = document.getElementById('pc-slider');
+  slider.max = months.length - 1;
+  slider.value = months.length - 1;
+  document.getElementById('pc-slider-label').textContent = months[months.length - 1];
+  slider.oninput = () => {
+    document.getElementById('pc-slider-label').textContent = months[slider.value];
+    lookupPostcode();
+  };
+}
+
+function parseYM(s) { const [y,m] = s.split('-').map(Number); return y * 12 + m; }
+function formatYM(v) { const y = Math.floor((v-1)/12); const m = ((v-1)%12)+1; return `${y}-${String(m).padStart(2,'0')}`; }
+function addMonth(v) { return v + 1; }
+
+async function lookupPostcode() {
+  const pc = document.getElementById('pc-input').value.trim();
+  if (!pc) return;
+  const at = months[document.getElementById('pc-slider').value];
+
+  // lookup at specific date
+  const res = await fetch(`/api/lookup/${pc}?at=${at}`);
+  const data = await res.json();
+  let html = '';
+  if (data.entries.length === 0) {
+    html = `<p class="result-empty">${at} 時点で 〒${pc} は見つかりません</p>`;
+  } else {
+    html = `<table><tr><th>時点</th><th>都道府県</th><th>市区町村</th><th>町域</th></tr>`;
+    for (const e of data.entries) {
+      html += `<tr><td>${at}</td><td>${e.prefecture}</td><td>${e.municipality}</td><td>${e.town}</td></tr>`;
+    }
+    html += '</table>';
+  }
+  document.getElementById('pc-result').innerHTML = html;
+
+  // timeline (periods)
+  const res2 = await fetch(`/api/postcode/${pc}/periods`);
+  const data2 = await res2.json();
+  if (data2.periods.length > 0) {
+    let tl = '<h3 style="margin-top:16px;font-size:0.95em;">住所変遷タイムライン</h3>';
+    tl += '<table><tr><th>期間</th><th>住所</th></tr>';
+    for (const p of data2.periods) {
+      const toStr = p.to === 'present' ? '現在' : p.to;
+      const addr = p.addresses.map(a => a.prefecture + a.municipality + a.town).join(', ');
+      tl += `<tr><td>${p.from} ~ ${toStr}</td><td>${addr}</td></tr>`;
+    }
+    tl += '</table>';
+    document.getElementById('pc-timeline').innerHTML = tl;
+  }
+}
+
+async function lookupAddress() {
+  const pref = document.getElementById('addr-pref').value.trim();
+  const muni = document.getElementById('addr-muni').value.trim();
+  const town = document.getElementById('addr-town').value.trim();
+  if (!pref || !muni || !town) return;
+
+  // periods
+  const res = await fetch(`/api/address/periods?prefecture=${encodeURIComponent(pref)}&municipality=${encodeURIComponent(muni)}&town=${encodeURIComponent(town)}`);
+  const data = await res.json();
+
+  let html = `<h3 style="font-size:0.95em;">${pref}${muni}${town} の郵便番号変遷</h3>`;
+  if (data.periods.length === 0) {
+    html += '<p class="result-empty">データが見つかりません</p>';
+  } else {
+    html += '<div style="margin:8px 0">';
+    for (const p of data.periods) {
+      const toStr = p.to === 'present' ? '現在' : p.to;
+      html += `<span class="period"><span class="pc">〒${p.postcode}</span> ${p.from} ~ ${toStr}</span> `;
+    }
+    html += '</div>';
+    if (data.periods.length > 1) {
+      html += '<p style="margin-top:8px;font-size:0.9em;color:#ef4444;">郵便番号が変更されています</p>';
+    }
+  }
+  document.getElementById('addr-result').innerHTML = html;
+}
+
+async function loadDiff() {
+  const from = document.getElementById('diff-from').value.trim();
+  const to = document.getElementById('diff-to').value.trim();
+  if (!from || !to) return;
+
+  const res = await fetch(`/api/diff?from=${from}&to=${to}&limit=30`);
+  const data = await res.json();
+
+  let html = `<p style="margin-bottom:8px">追加: <strong>${data.addedCount}</strong> 件 / 削除: <strong>${data.removedCount}</strong> 件</p>`;
+
+  if (data.added.length > 0) {
+    html += '<h3 style="font-size:0.95em;color:#16a34a;">+ 追加</h3><table><tr><th>郵便番号</th><th>住所</th></tr>';
+    for (const a of data.added) {
+      const addr = a.entries.map(e => e.prefecture + e.municipality + e.town).join(', ');
+      html += `<tr><td style="font-family:monospace">${a.postcode}</td><td>${addr}</td></tr>`;
+    }
+    html += '</table>';
+  }
+
+  if (data.removed.length > 0) {
+    html += '<h3 style="font-size:0.95em;color:#ef4444;margin-top:12px;">- 削除</h3><table><tr><th>郵便番号</th><th>住所</th></tr>';
+    for (const r of data.removed) {
+      const addr = r.entries.map(e => e.prefecture + e.municipality + e.town).join(', ');
+      html += `<tr><td style="font-family:monospace">${r.postcode}</td><td>${addr}</td></tr>`;
+    }
+    html += '</table>';
+  }
+
+  document.getElementById('diff-result').innerHTML = html;
+}
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.panel).classList.add('active');
+  };
+});
+
+init();
+</script>
+</body>
+</html>
