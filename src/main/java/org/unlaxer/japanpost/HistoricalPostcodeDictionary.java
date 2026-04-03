@@ -74,6 +74,52 @@ public class HistoricalPostcodeDictionary {
         return build(dataDir);
     }
 
+    /**
+     * バイナリスナップショットから辞書を構築。
+     * DictionarySnapshot.load() から呼ばれる内部メソッド。
+     */
+    static HistoricalPostcodeDictionary buildFromSnapshot(
+            YearMonth baselineMonth,
+            Set<PostcodeEntry> baseline,
+            TreeMap<YearMonth, DictionarySnapshot.DeltaEntries> deltas
+    ) {
+        var dict = new HistoricalPostcodeDictionary();
+        System.out.println("Restoring snapshots from binary snapshot...");
+
+        // ベースラインを最新月として登録
+        dict.snapshots.put(baselineMonth, toPostcodeMap(baseline));
+
+        // 逆順に過去を復元（deltaは newest-first で格納されている）
+        Set<PostcodeEntry> state = new HashSet<>(baseline);
+        int monthCount = 0;
+        for (var entry : deltas.descendingMap().entrySet()) {
+            YearMonth month = entry.getKey();
+            DictionarySnapshot.DeltaEntries delta = entry.getValue();
+            state.removeAll(delta.adds());  // この月のADDを引く
+            state.addAll(delta.dels());     // この月のDELを足す
+            dict.snapshots.put(month, toPostcodeMap(state));
+            monthCount++;
+            if (monthCount % 50 == 0) {
+                System.out.printf("  restored %d months (current: %s, entries: %,d)\n",
+                        monthCount, month, state.size());
+            }
+        }
+        System.out.printf("  Total snapshots: %d (%s ~ %s)\n",
+                dict.snapshots.size(),
+                dict.snapshots.firstKey(),
+                dict.snapshots.lastKey());
+
+        dict.buildTimelines();
+        return dict;
+    }
+
+    /**
+     * バイナリスナップショットファイルから辞書をロード。
+     */
+    public static HistoricalPostcodeDictionary loadSnapshot(Path snapshotFile) throws IOException {
+        return DictionarySnapshot.load(snapshotFile);
+    }
+
     // ======== 検索API ========
 
     /**
@@ -458,13 +504,24 @@ public class HistoricalPostcodeDictionary {
                 var dict = downloadAndBuild(dataDir);
                 demo(dict);
             }
+            case "snapshot-write" -> {
+                Path output = Path.of(args.length > 2 ? args[2] : dataDir.resolve("japanpost-history.snapshot").toString());
+                DictionarySnapshot.write(dataDir, output);
+            }
+            case "snapshot-load" -> {
+                Path input = Path.of(args.length > 1 ? args[1] : "/tmp/japanpost-history/japanpost-history.snapshot");
+                var dict = loadSnapshot(input);
+                demo(dict);
+            }
             default -> {
                 System.out.println("japanpost-history: Historical Japanese postal code dictionary");
                 System.out.println();
                 System.out.println("Commands:");
-                System.out.println("  download [dir]  Download KEN_ALL + all ADD/DEL files (2008-01 ~ now)");
-                System.out.println("  build [dir]     Build dictionary from downloaded files");
-                System.out.println("  run [dir]       Download + build + demo");
+                System.out.println("  download [dir]      Download KEN_ALL + all ADD/DEL files");
+                System.out.println("  build [dir]         Build dictionary from CSV files");
+                System.out.println("  run [dir]           Download + build + demo");
+                System.out.println("  snapshot-write [dir] [output]  Write binary snapshot");
+                System.out.println("  snapshot-load [file] Load from binary snapshot + demo");
                 System.out.println();
                 System.out.println("Default dir: /tmp/japanpost-history");
             }
