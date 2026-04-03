@@ -52,6 +52,7 @@
     <button class="tab" data-panel="panel-postcode">郵便番号 → 住所</button>
     <button class="tab" data-panel="panel-address">住所 → 郵便番号</button>
     <button class="tab" data-panel="panel-diff">差分比較</button>
+    <button class="tab" data-panel="panel-help" style="margin-left:auto;">?</button>
   </div>
 
   <!-- 前方一致検索 -->
@@ -102,6 +103,61 @@
       <button onclick="loadDiff()">比較</button>
     </div>
     <div class="result" id="diff-result"></div>
+  </div>
+
+  <!-- ヘルプ -->
+  <div class="panel" id="panel-help">
+    <h2 style="font-size:1.1em;margin-bottom:12px;">japanpost-history ヘルプ</h2>
+    <p style="margin-bottom:16px;">日本郵便のKEN_ALL + 月次更新データ (ADD/DEL) から2007年10月〜現在の全郵便番号スナップショットを復元した、郵便番号のタイムマシンです。</p>
+
+    <h3 style="font-size:1em;margin:12px 0 6px;">前方一致検索</h3>
+    <p>郵便番号の先頭を入力すると、その時点の該当住所がリ���ルタイムで一覧表示されます。</p>
+    <ul style="margin:6px 0 6px 20px;font-size:0.9em;">
+      <li><code>145</code> → 東京都大田区の住所一覧</li>
+      <li><code>060</code> → 北海道札幌市中央区の住所一覧</li>
+      <li>スライダーで時点���変えると、その当時の住所が表示されます</li>
+      <li>市町村合併や住所名変更があった地域ではスライダーの効果が顕著です</li>
+    </ul>
+
+    <h3 style="font-size:1em;margin:12px 0 6px;">郵便番号 → 住所</h3>
+    <p>7桁の郵便番号を入力し、指定時点の住所を検索します。住所名が変わった郵便番号は変遷タイムラインも表示されます。</p>
+    <ul style="margin:6px 0 6px 20px;font-size:0.9em;">
+      <li>例: <code>0613601</code> → 石狩市厚田区厚田（2026年3月以前）/ 石狩市���田（2026年4月以降）</li>
+    </ul>
+
+    <h3 style="font-size:1em;margin:12px 0 6px;">住所 → 郵便番号</h3>
+    <p>都道府県・市区町村・町域を入力し、郵便番号の変遷を検索します。途中で郵便番号が変わった住所は複数の期間が表示されます。</p>
+
+    <h3 style="font-size:1em;margin:12px 0 6px;">差分比較</h3>
+    <p>2つの時点（YYYY-MM形式）を指定し、その間に追加・削除された郵便番号エントリを比較します。</p>
+    <ul style="margin:6px 0 6px 20px;font-size:0.9em;">
+      <li>例: <code>2026-03</code> → <code>2026-04</code> で石狩市厚田区の廃止やビル名変更が見える</li>
+    </ul>
+
+    <h3 style="font-size:1em;margin:16px 0 6px;">データソース</h3>
+    <table>
+      <tr><th>データ</th><th>出典</th></tr>
+      <tr><td>KEN_ALL.CSV</td><td>日本郵便 郵便番号データ（最新全国一括）</td></tr>
+      <tr><td>ADD_YYMM / DEL_YYMM</td><td>日本郵便 月次更新ファイル（2007年10月〜）</td></tr>
+    </table>
+    <p style="margin-top:12px;font-size:0.85em;color:#888;">郵便番号データに限っては日本郵便株式会社は著作権を主張しておらず、自由に配布可能��す。</p>
+
+    <h3 style="font-size:1em;margin:16px 0 6px;">API</h3>
+    <table>
+      <tr><th>エンドポイント</th><th>説明</th></tr>
+      <tr><td><code>GET /api/prefix/{prefix}?at=</code></td><td>前方一致検索</td></tr>
+      <tr><td><code>GET /api/lookup/{postcode}?at=</code></td><td>郵便番号→住所</td></tr>
+      <tr><td><code>GET /api/postcode/{pc}/periods</code></td><td>郵便番号の住所変遷</td></tr>
+      <tr><td><code>GET /api/address/lookup?prefecture=&municipality=&town=&at=</code></td><td>住所→郵便番号</td></tr>
+      <tr><td><code>GET /api/address/periods?prefecture=&municipality=&town=</code></td><td>住所の郵便番号変遷</td></tr>
+      <tr><td><code>GET /api/diff?from=&to=</code></td><td>差分比較</td></tr>
+      <tr><td><code>GET /api/info</code></td><td>辞書メタ情報</td></tr>
+      <tr><td><code>GET /api/stats</code></td><td>変更統計</td></tr>
+    </table>
+
+    <p style="margin-top:16px;font-size:0.85em;color:#888;">
+      GitHub: <a href="https://github.com/opaopa6969/japanpost-history" target="_blank">opaopa6969/japanpost-history</a>
+    </p>
   </div>
 </div>
 
