@@ -41,6 +41,12 @@
 
     <dependencies>
         <dependency>
+            <groupId>org.unlaxer</groupId>
+            <artifactId>municipality-history</artifactId>
+            <version>1.0.0</version>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
             <groupId>io.javalin</groupId>
             <artifactId>javalin</artifactId>
             <version>${javalin.version}</version>

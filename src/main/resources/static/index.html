@@ -257,18 +257,33 @@ async function lookupPostcode() {
   }
   document.getElementById('pc-result').innerHTML = html;
 
-  // timeline (periods)
-  const res2 = await fetch(`/api/postcode/${pc}/periods`);
-  const data2 = await res2.json();
-  if (data2.periods.length > 0) {
+  // timeline + 統廃合コンテキスト
+  const res2 = await fetch(`/api/postcode/${pc}/explain`).catch(() => null);
+  const hasExplain = res2 && res2.ok;
+  const data2 = hasExplain ? await res2.json()
+    : await fetch(`/api/postcode/${pc}/periods`).then(r => r.json());
+
+  const periods = hasExplain ? data2.addressPeriods : data2.periods;
+  if (periods && periods.length > 0) {
     let tl = '<h3 style="margin-top:16px;font-size:0.95em;">住所変遷タイムライン</h3>';
     tl += '<table><tr><th>期間</th><th>住所</th></tr>';
-    for (const p of data2.periods) {
+    for (const p of periods) {
       const toStr = p.to === 'present' ? '現在' : p.to;
       const addr = p.addresses.map(a => a.prefecture + a.municipality + a.town).join(', ');
       tl += `<tr><td>${p.from} ~ ${toStr}</td><td>${addr}</td></tr>`;
     }
     tl += '</table>';
+
+    // 統廃合コンテキスト
+    if (hasExplain && data2.relatedMuniChanges && data2.relatedMuniChanges.length > 0) {
+      tl += '<h3 style="margin-top:12px;font-size:0.95em;color:#b45309;">関連する自治体統廃合</h3>';
+      tl += '<table><tr><th>施行日</th><th>自治体</th><th>事由</th></tr>';
+      for (const c of data2.relatedMuniChanges) {
+        const reason = c.reason.split('\n')[0];
+        tl += `<tr><td>${c.date}</td><td>${c.prefecture}${c.name}</td><td style="font-size:0.85em">${reason}</td></tr>`;
+      }
+      tl += '</table>';
+    }
     document.getElementById('pc-timeline').innerHTML = tl;
   }
 }

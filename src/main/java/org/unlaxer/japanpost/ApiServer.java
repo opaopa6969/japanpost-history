@@ -5,6 +5,8 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.staticfiles.Location;
+import org.unlaxer.municipality.MunicipalityChange;
+import org.unlaxer.municipality.MunicipalityHistory;
 
 import java.nio.file.Path;
 import java.time.YearMonth;
@@ -20,9 +22,18 @@ public class ApiServer {
             .registerModule(new JavaTimeModule());
 
     private final HistoricalPostcodeDictionary dict;
+    private PostcodeWithContext context; // null if municipality-history not available
 
     public ApiServer(HistoricalPostcodeDictionary dict) {
         this.dict = dict;
+        try {
+            MunicipalityHistory muni = MunicipalityHistory.loadBundled();
+            this.context = new PostcodeWithContext(dict, muni);
+            System.out.printf("Municipality history loaded: %,d records\n", muni.size());
+        } catch (Exception e) {
+            System.out.println("Municipality history not available (optional): " + e.getMessage());
+            this.context = null;
+        }
     }
 
     public void start(int port) {
@@ -59,6 +70,12 @@ public class ApiServer {
 
         // 統計
         app.get("/api/stats", this::handleStats);
+
+        // 郵便番号の変遷 + 統廃合コンテキス��
+        app.get("/api/postcode/{postcode}/explain", this::handleExplainPostcode);
+
+        // 住所の変遷 + 統廃合コンテキスト
+        app.get("/api/address/explain", this::handleExplainAddress);
 
         System.out.printf("API server started on http://localhost:%d\n", port);
     }
@@ -250,6 +267,58 @@ public class ApiServer {
                                 "changedAt", c.changedAt().toString()
                         )).toList()
         ));
+    }
+
+    private void handleExplainPostcode(Context ctx) {
+        String postcode = ctx.pathParam("postcode");
+        if (context == null) {
+            ctx.status(503).json(Map.of("error", "municipality-history not available"));
+            return;
+        }
+        var explanation = context.explainPostcodeChanges(postcode);
+        ctx.json(Map.of(
+                "postcode", postcode,
+                "addressPeriods", explanation.addressPeriods().stream().map(p -> Map.of(
+                        "from", p.from().toString(),
+                        "to", p.to() == null ? "present" : p.to().toString(),
+                        "addresses", p.entries().stream().map(this::entryToMap).toList()
+                )).toList(),
+                "relatedMuniChanges", explanation.relatedMuniChanges().stream().map(this::muniChangeToMap).toList()
+        ));
+    }
+
+    private void handleExplainAddress(Context ctx) {
+        String pref = ctx.queryParam("prefecture");
+        String muni = ctx.queryParam("municipality");
+        String town = ctx.queryParam("town");
+        if (pref == null || muni == null || town == null) {
+            ctx.status(400).json(Map.of("error", "prefecture, municipality, town are required"));
+            return;
+        }
+        if (context == null) {
+            ctx.status(503).json(Map.of("error", "municipality-history not available"));
+            return;
+        }
+        var explanation = context.explainAddressChanges(pref, muni, town);
+        ctx.json(Map.of(
+                "address", pref + muni + town,
+                "postcodePeriods", explanation.postcodePeriods().stream().map(p -> Map.of(
+                        "from", p.from().toString(),
+                        "to", p.to() == null ? "present" : p.to().toString(),
+                        "postcode", p.postcode()
+                )).toList(),
+                "relatedMuniChanges", explanation.relatedMuniChanges().stream().map(this::muniChangeToMap).toList()
+        ));
+    }
+
+    private Map<String, String> muniChangeToMap(MunicipalityChange c) {
+        var m = new LinkedHashMap<String, String>();
+        m.put("date", c.effectiveDate() != null ? c.effectiveDate().toString() : "");
+        m.put("lgCode", c.lgCode());
+        m.put("prefecture", c.prefecture());
+        m.put("name", c.fullName());
+        m.put("reason", c.reason());
+        return m;
     }
 
     private Map<String, String> entryToMap(PostcodeEntry e) {
