@@ -17,25 +17,40 @@
 - Java 21+
 - Maven
 
-### 1. ダウンロード + 辞書構築 + デモ
+### 1. スナップショットから即起動 (推奨)
 
 ```bash
+# スナップショットをダウンロード (2.6MB)
+curl -L -o /tmp/japanpost-history.snapshot \
+  https://github.com/opaopa6969/japanpost-history/releases/download/v1.0.0/japanpost-history.snapshot
+
+# 辞書をロード + デモ
+mvn -q compile exec:java -Dexec.args="snapshot-load /tmp/japanpost-history.snapshot"
+```
+
+ロード時間: **218ms** (CSVからの構築は60秒)。スナップショットサイズ: **2.6MB** (元CSV 29MB)。
+
+### 2. CSVからフルビルド
+
+```bash
+# 日本郵便からKEN_ALL + 222ヶ月分のADD/DELをダウンロード + 辞書構築 + デモ
 mvn -q compile exec:java -Dexec.args="run"
 ```
 
-これで:
-1. 日本郵便から KEN_ALL + 219ヶ月分の ADD/DEL を `/tmp/japanpost-history/` にダウンロード
-2. 辞書を構築（最新→過去を逆算復元）
-3. デモ検索を実行
-
-### 2. ダウンロードだけ / ビルドだけ
+### 3. 個別コマンド
 
 ```bash
 # ダウンロードのみ
 mvn -q compile exec:java -Dexec.args="download /path/to/dir"
 
-# 構築のみ（ダウンロード済みデータから）
+# CSVから構築のみ
 mvn -q compile exec:java -Dexec.args="build /path/to/dir"
+
+# スナップショット書き出し
+mvn -q compile exec:java -Dexec.args="snapshot-write /path/to/csv-dir /path/to/output.snapshot"
+
+# スナップショットからロード
+mvn -q compile exec:java -Dexec.args="snapshot-load /path/to/snapshot"
 ```
 
 ## Java API
@@ -44,8 +59,11 @@ mvn -q compile exec:java -Dexec.args="build /path/to/dir"
 import org.unlaxer.japanpost.HistoricalPostcodeDictionary;
 import java.time.YearMonth;
 
-// 構築
-var dict = HistoricalPostcodeDictionary.build(Path.of("/tmp/japanpost-history"));
+// スナップショットからロード (推奨: 218ms)
+var dict = HistoricalPostcodeDictionary.loadSnapshot(Path.of("japanpost-history.snapshot"));
+
+// または CSVからビルド (60秒)
+// var dict = HistoricalPostcodeDictionary.build(Path.of("/tmp/japanpost-history"));
 
 // 郵便番号 → 指定時点の住所
 var entries = dict.lookup("0613601", YearMonth.of(2015, 4));
@@ -91,3 +109,38 @@ KEN_ALL (2026年4月時点)
 月M の ADD = その月に追加されたエントリ（前月にはなかった）  
 月M の DEL = その月に削除されたエントリ（前月にはあった）  
 → 逆算: ADDを引き、DELを足すと前月の状態が復元される
+
+## バイナリスナップショット
+
+CSVファイル群をコンパクトなバイナリ形式に変換。DB不要で高速起動。
+
+| 方式 | サイズ | ロード時間 |
+|------|--------|-----------|
+| CSV (222ファイル) | 29 MB | ~60秒 |
+| バイナリスナップショット | **2.6 MB** | **218 ms** |
+
+フォーマット: ベースライン（最新月フルデータ）+ 月次delta（ADD/DEL差分のみ）をString Pool + GZIP圧縮。
+
+ダウンロード: https://github.com/opaopa6969/japanpost-history/releases
+
+## REST API + 検索UI
+
+```bash
+# APIサーバー起動 (スナップショットから)
+java -cp "$(mvn -q dependency:build-classpath -Dmdep.outputFile=/dev/stdout):target/classes" \
+  org.unlaxer.japanpost.ApiServer /tmp/japanpost-history 7070
+```
+
+UI: http://localhost:7070/
+
+### API エンドポイント
+
+| エンドポイント | 説明 |
+|---------------|------|
+| `GET /api/info` | 辞書メタ情報 |
+| `GET /api/lookup/{postcode}?at=YYYY-MM` | 郵便番号→住所（時点指定） |
+| `GET /api/postcode/{postcode}/periods` | 郵便番号の住所変遷 |
+| `GET /api/address/lookup?prefecture=&municipality=&town=&at=` | 住所→郵便番号（時点指定） |
+| `GET /api/address/periods?prefecture=&municipality=&town=` | 住所の郵便番号変遷 |
+| `GET /api/diff?from=YYYY-MM&to=YYYY-MM` | 2時点間の差分 |
+| `GET /api/stats` | 変更統計 |
