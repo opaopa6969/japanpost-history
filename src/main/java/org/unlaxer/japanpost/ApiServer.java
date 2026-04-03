@@ -42,6 +42,9 @@ public class ApiServer {
         // 郵便番号の住所変遷（期間抽出）
         app.get("/api/postcode/{postcode}/periods", this::handlePostcodeAddressPeriods);
 
+        // 郵便番号前方一致検索（時点指定）
+        app.get("/api/prefix/{prefix}", this::handlePrefix);
+
         // 住所 → 郵便番号（時点指定）
         app.get("/api/address/lookup", this::handleAddressLookup);
 
@@ -80,6 +83,27 @@ public class ApiServer {
                 "at", at.toString(),
                 "count", entries.size(),
                 "entries", entries.stream().map(this::entryToMap).toList()
+        ));
+    }
+
+    private void handlePrefix(Context ctx) {
+        String prefix = ctx.pathParam("prefix");
+        YearMonth at = parseYearMonth(ctx.queryParam("at"), dict.latestMonth());
+        int limit = Integer.parseInt(Objects.requireNonNullElse(ctx.queryParam("limit"), "200"));
+
+        var results = dict.lookupByPrefix(prefix, at, limit);
+        ctx.json(Map.of(
+                "prefix", prefix,
+                "at", at.toString(),
+                "count", results.size(),
+                "entries", results.stream().map(e -> {
+                    var m = new LinkedHashMap<String, Object>();
+                    m.put("postcode", e.postcode());
+                    m.put("prefecture", e.prefecture());
+                    m.put("municipality", e.municipality());
+                    m.put("town", e.town());
+                    return m;
+                }).toList()
         ));
     }
 

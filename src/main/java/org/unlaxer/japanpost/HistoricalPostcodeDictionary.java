@@ -46,7 +46,7 @@ public class HistoricalPostcodeDictionary {
     private static final Charset MS932 = Charset.forName("MS932");
 
     /** 月 → その月時点の (postcode → entries) マップ */
-    private final TreeMap<YearMonth, Map<String, List<PostcodeEntry>>> snapshots = new TreeMap<>();
+    private final TreeMap<YearMonth, TreeMap<String, List<PostcodeEntry>>> snapshots = new TreeMap<>();
 
     /** postcode → (month → entries) — 全期間の郵便番号タイムライン */
     private final Map<String, TreeMap<YearMonth, List<PostcodeEntry>>> postcodeTimeline = new HashMap<>();
@@ -121,6 +121,38 @@ public class HistoricalPostcodeDictionary {
     }
 
     // ======== 検索API ========
+
+    /**
+     * 郵便番号の前方一致検索。指定時点のスナップショットから prefix に一致する全エントリを返す。
+     * 例: prefix="1450" → 〒145-00xx の大田区周辺がずらっと出る。
+     */
+    public List<PostcodeEntry> lookupByPrefix(String prefix, YearMonth at, int limit) {
+        var floor = snapshots.floorEntry(at);
+        if (floor == null) return List.of();
+        TreeMap<String, List<PostcodeEntry>> snapshot = floor.getValue();
+
+        // TreeMap.subMap で O(log n) の前方一致
+        String fromKey = prefix;
+        String toKey = prefixUpperBound(prefix);
+        var subMap = toKey != null ? snapshot.subMap(fromKey, true, toKey, false)
+                                  : snapshot.tailMap(fromKey, true);
+
+        List<PostcodeEntry> results = new ArrayList<>();
+        for (var entry : subMap.entrySet()) {
+            if (!entry.getKey().startsWith(prefix)) break;
+            results.addAll(entry.getValue());
+            if (results.size() >= limit) break;
+        }
+        return results.size() > limit ? results.subList(0, limit) : results;
+    }
+
+    /** "1450" → "1451", "999" → "99:" (ASCII '9'+1=':') */
+    private static String prefixUpperBound(String prefix) {
+        if (prefix.isEmpty()) return null;
+        char last = prefix.charAt(prefix.length() - 1);
+        if (last == Character.MAX_VALUE) return null;
+        return prefix.substring(0, prefix.length() - 1) + (char) (last + 1);
+    }
 
     /**
      * 郵便番号 → 指定時点の住所エントリ。
@@ -470,9 +502,9 @@ public class HistoricalPostcodeDictionary {
         return entries;
     }
 
-    private static Map<String, List<PostcodeEntry>> toPostcodeMap(Set<PostcodeEntry> entries) {
+    private static TreeMap<String, List<PostcodeEntry>> toPostcodeMap(Set<PostcodeEntry> entries) {
         return entries.stream().collect(Collectors.groupingBy(
-                PostcodeEntry::postcode, HashMap::new, Collectors.toList()));
+                PostcodeEntry::postcode, TreeMap::new, Collectors.toList()));
     }
 
     private static YearMonth parseYearMonth(String yymm) {

@@ -11,8 +11,9 @@
   h1 { font-size: 1.5em; margin-bottom: 4px; }
   .subtitle { color: #888; font-size: 0.9em; margin-bottom: 20px; }
   .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
-  .tab { padding: 8px 16px; background: #ddd; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 0.95em; }
-  .tab.active { background: #fff; font-weight: bold; }
+  .tab { padding: 8px 16px; background: #ddd; color: #555; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 0.95em; }
+  .tab.active { background: #fff; color: #111; font-weight: bold; }
+  .tab:hover { background: #e8e8e8; }
   .panel { background: #fff; border-radius: 0 8px 8px 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: none; }
   .panel.active { display: block; }
   .form-row { display: flex; gap: 8px; align-items: end; margin-bottom: 12px; flex-wrap: wrap; }
@@ -47,13 +48,28 @@
   <div class="info-bar" id="info-bar">読み込み中...</div>
 
   <div class="tabs">
-    <button class="tab active" data-panel="panel-postcode">郵便番号 → 住所</button>
+    <button class="tab active" data-panel="panel-prefix">前方一致検索</button>
+    <button class="tab" data-panel="panel-postcode">郵便番号 → 住所</button>
     <button class="tab" data-panel="panel-address">住所 → 郵便番号</button>
     <button class="tab" data-panel="panel-diff">差分比較</button>
   </div>
 
+  <!-- 前方一致検索 -->
+  <div class="panel active" id="panel-prefix">
+    <div class="form-row">
+      <div><label>郵便番号（前方一致）</label><input class="postcode" id="prefix-input" placeholder="1450" maxlength="7" oninput="prefixSearch()"></div>
+      <span id="prefix-count" style="color:#888;font-size:0.9em;"></span>
+    </div>
+    <div class="slider-row">
+      <span>時点:</span>
+      <input type="range" id="prefix-slider" min="0" max="100" value="100" oninput="onPrefixSlider()">
+      <span class="slider-label" id="prefix-slider-label">-</span>
+    </div>
+    <div class="result" id="prefix-result" style="max-height:500px;overflow-y:auto;"></div>
+  </div>
+
   <!-- 郵便番号 → 住所 -->
-  <div class="panel active" id="panel-postcode">
+  <div class="panel" id="panel-postcode">
     <div class="form-row">
       <div><label>郵便番号</label><input class="postcode" id="pc-input" placeholder="0613601" maxlength="7"></div>
       <button onclick="lookupPostcode()">検索</button>
@@ -110,6 +126,12 @@ async function init() {
     months.push(formatYM(cur));
     cur = addMonth(cur);
   }
+  // prefix slider setup
+  const prefixSlider = document.getElementById('prefix-slider');
+  prefixSlider.max = months.length - 1;
+  prefixSlider.value = months.length - 1;
+  document.getElementById('prefix-slider-label').textContent = months[months.length - 1];
+
   const slider = document.getElementById('pc-slider');
   slider.max = months.length - 1;
   slider.value = months.length - 1;
@@ -123,6 +145,41 @@ async function init() {
 function parseYM(s) { const [y,m] = s.split('-').map(Number); return y * 12 + m; }
 function formatYM(v) { const y = Math.floor((v-1)/12); const m = ((v-1)%12)+1; return `${y}-${String(m).padStart(2,'0')}`; }
 function addMonth(v) { return v + 1; }
+
+let prefixTimer = null;
+function onPrefixSlider() {
+  const slider = document.getElementById('prefix-slider');
+  document.getElementById('prefix-slider-label').textContent = months[slider.value];
+  prefixSearch();
+}
+
+async function prefixSearch() {
+  const prefix = document.getElementById('prefix-input').value.trim();
+  if (!prefix) {
+    document.getElementById('prefix-result').innerHTML = '';
+    document.getElementById('prefix-count').textContent = '';
+    return;
+  }
+  // debounce
+  clearTimeout(prefixTimer);
+  prefixTimer = setTimeout(async () => {
+    const at = months[document.getElementById('prefix-slider').value];
+    const res = await fetch(`/api/prefix/${prefix}?at=${at}&limit=200`);
+    const data = await res.json();
+    document.getElementById('prefix-count').textContent = `${data.count}件`;
+
+    if (data.count === 0) {
+      document.getElementById('prefix-result').innerHTML = '<p class="result-empty">該当なし</p>';
+      return;
+    }
+    let html = '<table><tr><th>〒</th><th>都道府県</th><th>市区町村</th><th>町域</th></tr>';
+    for (const e of data.entries) {
+      html += `<tr><td style="font-family:monospace">${e.postcode}</td><td>${e.prefecture}</td><td>${e.municipality}</td><td>${e.town}</td></tr>`;
+    }
+    html += '</table>';
+    document.getElementById('prefix-result').innerHTML = html;
+  }, 150);
+}
 
 async function lookupPostcode() {
   const pc = document.getElementById('pc-input').value.trim();
