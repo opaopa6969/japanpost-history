@@ -6,6 +6,12 @@
 
 2007年10月～現在の約18年分・222ヶ月のスナップショットを復元し、`NavigableMap` ベースで時点検索を提供します。
 
+**ドキュメント**:
+[はじめに](docs/getting-started.md) |
+[アーキテクチャ](docs/architecture.md) |
+[データソース](docs/data-source.md) |
+[CHANGELOG](CHANGELOG.md)
+
 ## ユースケース
 
 - 20年前に電力契約した住所の郵便番号を、**当時の郵便番号**で引きたい
