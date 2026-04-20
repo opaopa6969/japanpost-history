@@ -4,6 +4,27 @@
 フォーマットは [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) に準拠。
 バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.0.1] - 2026-04-19
+
+### 追加
+- **ユニットテスト**: `PostcodeEntryTest`・`DictionarySnapshotTest`・`HistoricalPostcodeDictionaryTest`・`EstatConfigTest` を追加 (#1, #2)
+- **CI**: `.github/workflows/ci.yml` — `mvn test` を push/PR 時に自動実行 (#1)
+- **`EstatConfig`**: e-Stat appId を `ESTAT_APP_ID` 環境変数から優先取得するユーティリティクラス。未設定時はデフォルト値にフォールバック（後方互換）(#4)
+
+### セキュリティ
+- **uint16 overflow guard** (`DictionarySnapshot`): delta の ADD/DEL エントリ数が 65535 を超える場合に `IllegalStateException` を投げるよう変更。従来は符号なし short の silent overflow でデータが破損する可能性があった (#3)
+- **Zip Slip 防御** (`JapanPostDownloader`): ZIP 展開時にエントリのパスが出力ディレクトリ外を指す場合に `SecurityException` を投げるよう変更 (#3)
+
+### 依存関係
+- `junit-jupiter-api` 5.10.3 (test scope) 追加
+- `junit-jupiter-engine` 5.10.3 (test scope) 追加
+- `maven-surefire-plugin` 3.2.5 追加
+
+### 後方互換性
+- 既存の public API に変更なし
+- スナップショットフォーマットに変更なし
+- `DictionarySnapshot.write()` の uint16 overflow guard は、65535 件を超えるデルタを含む異常データに対してのみ例外を投げる（通常データは影響なし）
+
 ## [1.0.0] - 2026-04-19
 
 ### 追加

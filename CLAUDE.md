@@ -75,4 +75,4 @@ public static void main(String[] args) {
 - **リポ**: https://github.com/opaopa6969/japanpost-history (public, Maven Central)
 - **概要**: 時系列郵便番号辞書（2007-10〜現在、223スナップショット）
 - **現状**: v1.0.0 Maven Central公開済み。バイナリスナップショット2.6MB/218ms。REST API+UI実装済み。PostcodeWithContextでmunicipality-historyと連携済み
-- **e-Stat appId**: 24edfb042993e87548e75f8e26f6f5421646a6fe
+- **e-Stat appId**: 環境変数 `ESTAT_APP_ID` を優先使用（`EstatConfig.getAppId()`）。未設定時はデフォルト値にフォールバック（後方互換）

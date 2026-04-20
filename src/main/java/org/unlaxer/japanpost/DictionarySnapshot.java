@@ -127,6 +127,17 @@ public class DictionarySnapshot {
                 dos.writeByte(month.getMonthValue());
                 List<PostcodeEntry> adds = addByMonth.getOrDefault(month, List.of());
                 List<PostcodeEntry> dels = delByMonth.getOrDefault(month, List.of());
+                // uint16 overflow guard: addCount and delCount are stored as unsigned short (max 65535)
+                if (adds.size() > 65535) {
+                    throw new IllegalStateException(
+                            "ADD entry count " + adds.size() + " for " + month +
+                            " exceeds uint16 limit of 65535. Cannot write snapshot without data corruption.");
+                }
+                if (dels.size() > 65535) {
+                    throw new IllegalStateException(
+                            "DEL entry count " + dels.size() + " for " + month +
+                            " exceeds uint16 limit of 65535. Cannot write snapshot without data corruption.");
+                }
                 dos.writeShort(adds.size());
                 dos.writeShort(dels.size());
                 for (PostcodeEntry e : adds) writeEntry(dos, pool, e);

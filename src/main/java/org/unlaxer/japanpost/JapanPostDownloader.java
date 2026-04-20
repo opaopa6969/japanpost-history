@@ -73,7 +73,13 @@ public class JapanPostDownloader {
                 if (entry.isDirectory()) continue;
                 String name = entry.getName().toUpperCase();
                 if (name.endsWith(".CSV")) {
-                    Path target = outputDir.resolve(name);
+                    // Zip Slip 防御: 展開先が outputDir の外に出ないことを確認
+                    Path target = outputDir.resolve(name).normalize();
+                    if (!target.startsWith(outputDir.toAbsolutePath().normalize())) {
+                        throw new SecurityException(
+                                "Zip Slip detected: entry '" + entry.getName() +
+                                "' would extract outside target directory");
+                    }
                     Files.copy(zis, target, StandardCopyOption.REPLACE_EXISTING);
                 }
             }

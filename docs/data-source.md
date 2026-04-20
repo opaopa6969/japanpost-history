@@ -79,7 +79,13 @@ JapanPostDownloader.downloadAll(
 
 ### download-estat.mjs（Node.js / Playwright）
 
-e-Stat 経由でデータを取得する場合は `download-estat.mjs` スクリプトを使用します。このスクリプトは [Playwright](https://playwright.dev/) を使用してブラウザ自動化でデータを取得します。e-Stat API appId（`24edfb042993e87548e75f8e26f6f5421646a6fe`）が必要です。
+e-Stat 経由でデータを取得する場合は `download-estat.mjs` スクリプトを使用します。このスクリプトは [Playwright](https://playwright.dev/) を使用してブラウザ自動化でデータを取得します。e-Stat API appId が必要です。
+
+appId は環境変数 `ESTAT_APP_ID` で設定してください（`EstatConfig.getAppId()` が優先的に参照します）。未設定の場合はデフォルト値にフォールバックします。
+
+```bash
+export ESTAT_APP_ID=your_app_id_here
+```
 
 ```bash
 # Node.js と Playwright をインストール済みの場合
