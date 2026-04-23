@@ -20,6 +20,7 @@
 10. [非機能要件](#10-非機能要件)
 11. [テスト戦略](#11-テスト戦略)
 12. [デプロイ・運用](#12-デプロイ運用)
+13. [図解](#13-図解)
 
 ---
 
@@ -950,6 +951,161 @@ mvn -q compile exec:java \
 - **KEN_ALL の廃止リスク**: 日本郵便が配布形式を変更した場合、`JapanPostDownloader` の URL やパーサーの更新が必要です
 - **UTF-8 版移行**: 2023年6月以降、日本郵便は `utf_all.csv`（UTF-8版）を提供しています。現バージョンは MS932 版のみ対応であるため、将来的に UTF-8 版への移行を検討してください
 - **2007年10月以前のデータ**: 取得不可能（日本郵便サーバーおよび Wayback Machine にも残っていない）
+
+---
+
+## 13. 図解
+
+### 13.1 DictionarySnapshot バイナリレイアウト
+
+```mermaid
+graph TB
+    subgraph GZIP["GZIP 圧縮ストリーム"]
+        direction TB
+        HDR["ヘッダ<br/>magic: 'JPHS' (4B)<br/>version: uint16<br/>baselineMonth.year: uint16<br/>baselineMonth.month: uint8<br/>baselineEntryCount: uint32<br/>deltaMonthCount: uint16"]
+        POOL["StringPool<br/>poolSize: uint32<br/>strings[]: uint16(len) + UTF-8"]
+        BASE["ベースラインエントリ × baselineEntryCount<br/>postcodeIdx / prefectureIdx / municipalityIdx<br/>townIdx / lgCodeIdx / prefKanaIdx<br/>muniKanaIdx / townKanaIdx<br/>(各 uint32 = StringPool インデックス)"]
+        subgraph DELTA["デルタ月 × deltaMonthCount (newest-first)"]
+            DM["month.year: uint16<br/>month.month: uint8<br/>addCount: uint16<br/>delCount: uint16"]
+            ADD["ADD エントリ × addCount<br/>(ベースラインと同形式)"]
+            DEL["DEL エントリ × delCount<br/>(ベースラインと同形式)"]
+            DM --> ADD
+            DM --> DEL
+        end
+        HDR --> POOL
+        POOL --> BASE
+        BASE --> DELTA
+    end
+```
+
+### 13.2 build / download / delta apply シーケンス
+
+```mermaid
+sequenceDiagram
+    participant CLI as CLI / 呼び出し元
+    participant DL as JapanPostDownloader
+    participant JP as japanpost.jp (HTTPS)
+    participant DS as DictionarySnapshot
+    participant HPD as HistoricalPostcodeDictionary
+
+    CLI->>DL: downloadAll(outputDir)
+    DL->>JP: GET ken_all.zip
+    JP-->>DL: ZIP bytes
+    DL->>DL: Zip Slip ガード検証
+    DL->>DL: CSV 展開 → outputDir/KEN_ALL.CSV
+    loop 2007-10 ～ latestMonth (ADD/DEL 各月)
+        DL->>JP: GET add_YYMM.zip / del_YYMM.zip
+        JP-->>DL: ZIP bytes
+        DL->>DL: Zip Slip ガード検証
+        DL->>DL: CSV 展開 → outputDir/ADD_YYMM.CSV
+    end
+    DL-->>CLI: 完了
+
+    CLI->>DS: write(csvDir, outputFile)
+    DS->>DS: CSV パース → baseline + deltas 構築
+    DS->>DS: uint16 overflow guard チェック
+    DS->>DS: StringPool.freeze()
+    DS->>DS: GZIP 圧縮書き出し
+    DS-->>CLI: japanpost-history.snapshot (2.6 MB)
+
+    CLI->>HPD: loadSnapshot(snapshotFile)
+    HPD->>DS: load(snapshotFile)
+    DS->>DS: magic/version チェック
+    DS->>DS: StringPool 復元
+    DS->>DS: baseline + deltas 読み込み
+    DS-->>HPD: raw baseline + deltas
+    HPD->>HPD: buildFromSnapshot()<br/>（newest-first デルタを逆順適用）
+    HPD->>HPD: buildTimelines()<br/>（postcodeTimeline / addressTimeline 構築）
+    HPD-->>CLI: HistoricalPostcodeDictionary (ready)
+```
+
+### 13.3 uint16 overflow ガード + Zip Slip 検出フロー
+
+```mermaid
+flowchart TD
+    A([write 開始]) --> B{deltaMonthCount > 65535?}
+    B -- Yes --> ERR1[IllegalStateException<br/>deltaMonthCount exceeds uint16]
+    B -- No --> C[各 delta 月をループ]
+    C --> D{adds.size > 65535?}
+    D -- Yes --> ERR2[IllegalStateException<br/>ADD entry count exceeds uint16 limit]
+    D -- No --> E{dels.size > 65535?}
+    E -- Yes --> ERR3[IllegalStateException<br/>DEL entry count exceeds uint16 limit]
+    E -- No --> F[writeShort addCount / delCount]
+    F --> G{次の月あり?}
+    G -- Yes --> C
+    G -- No --> OK1([write 完了])
+
+    AZ([ZIP 展開開始]) --> H[ZipEntry.getName 取得]
+    H --> I[outputDir.resolve\nentry.normalize]
+    I --> J{target.startsWith\noutputDir.normalize?}
+    J -- No --> ERR4[SecurityException<br/>Zip Slip detected]
+    J -- Yes --> K[ファイル書き出し]
+    K --> L{次のエントリあり?}
+    L -- Yes --> H
+    L -- No --> OK2([展開完了])
+```
+
+### 13.4 クラス図: PostcodeEntry / DictionarySnapshot / StringPool
+
+```mermaid
+classDiagram
+    class PostcodeEntry {
+        +String lgCode
+        +String postcode
+        +String prefectureKana
+        +String municipalityKana
+        +String townKana
+        +String prefecture
+        +String municipality
+        +String town
+        +String addressKey()
+        +boolean isCatchAll()
+        +PostcodeEntry normalizeKana()
+        +String townWithoutParens()
+        +static PostcodeEntry fromCsvLine(String line)
+        +static List~PostcodeEntry~ mergeContinuationRows(List~PostcodeEntry~ rows)
+    }
+
+    class StringPool {
+        -LinkedHashMap~String,Integer~ indexMap
+        -String[] frozen
+        +void add(String s)
+        +void freeze()
+        +int indexOf(String s)
+        +String get(int idx)
+        +int size()
+        +void writeTo(DataOutputStream dos)
+        +StringPool readFrom(DataInputStream dis)$
+    }
+
+    class DictionarySnapshot {
+        +static void write(Path csvDir, Path outputFile)
+        +static HistoricalPostcodeDictionary load(Path snapshotFile)
+        -static final String MAGIC = "JPHS"
+        -static final int VERSION = 1
+    }
+
+    class HistoricalPostcodeDictionary {
+        -TreeMap~YearMonth, TreeMap~String, List~PostcodeEntry~~~ snapshots
+        -Map~String, TreeMap~YearMonth, List~PostcodeEntry~~~ postcodeTimeline
+        -Map~String, TreeMap~YearMonth, String~~ addressTimeline
+        +static HistoricalPostcodeDictionary build(Path dataDir)
+        +static HistoricalPostcodeDictionary loadSnapshot(Path snapshotFile)
+        +static HistoricalPostcodeDictionary downloadAndBuild(Path dataDir)
+        +List~PostcodeEntry~ lookup(String postcode, YearMonth at)
+        +String lookupByAddress(String pref, String muni, String town, YearMonth at)
+        +List~PostcodeEntry~ lookupByPrefix(String prefix, YearMonth at, int limit)
+        +Diff diff(YearMonth from, YearMonth to)
+        +YearMonth earliestMonth()
+        +YearMonth latestMonth()
+        +int snapshotCount()
+    }
+
+    DictionarySnapshot ..> StringPool : uses
+    DictionarySnapshot ..> PostcodeEntry : serializes
+    DictionarySnapshot --> HistoricalPostcodeDictionary : load() returns
+    HistoricalPostcodeDictionary "1" *-- "many" PostcodeEntry : contains
+```
 
 ---
 
