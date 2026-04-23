@@ -20,5 +20,15 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
+      - name: Install local dependencies
+        run: |
+          mvn install:install-file \
+            -Dfile=local-repo/municipality-history-1.0.0.jar \
+            -DpomFile=local-repo/municipality-history-1.0.0.pom \
+            -Dpackaging=jar \
+            -DgroupId=org.unlaxer \
+            -DartifactId=municipality-history \
+            -Dversion=1.0.0
+
       - name: Run tests
         run: mvn -B test -DskipGpg=true -Dgpg.skip=true
