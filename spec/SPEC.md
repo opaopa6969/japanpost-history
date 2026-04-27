@@ -1036,8 +1036,8 @@ flowchart TD
     G -- No --> OK1([write 完了])
 
     AZ([ZIP 展開開始]) --> H[ZipEntry.getName 取得]
-    H --> I[outputDir.resolve\nentry.normalize]
-    I --> J{target.startsWith\noutputDir.normalize?}
+    H --> I[outputDir.resolve<br/>entry.normalize]
+    I --> J{target.startsWith<br/>outputDir.normalize?}
     J -- No --> ERR4[SecurityException<br/>Zip Slip detected]
     J -- Yes --> K[ファイル書き出し]
     K --> L{次のエントリあり?}
